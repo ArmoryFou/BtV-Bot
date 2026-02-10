@@ -1,0 +1,7 @@
+services:
+  btvbot:
+    image: elaxdev/btvbot:latest
+    container_name: btvbot
+    restart: unless-stopped
+    env_file:
+      - .env
