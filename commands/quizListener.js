@@ -4,7 +4,7 @@ const PASS_ROLE_ID = '1464707866631078020';
 
 const QUIZ_RULES = {
   participants: 1,
-  scoreLimit: 2,
+  scoreLimit: 25,
   deckShortName: 'n2',
   noDelay: true,
   maxMissedQuestions: 5,
