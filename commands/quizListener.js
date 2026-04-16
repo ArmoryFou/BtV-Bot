@@ -1,3 +1,5 @@
+import { Events } from 'discord.js';
+
 const TARGET_CHANNEL_ID = '1464692992781717841';
 const KOTOBA_BOT_ID = '251239170058616833';
 const PASS_ROLE_ID = '1464707866631078020';
@@ -14,8 +16,10 @@ const QUIZ_RULES = {
   requireWin: true
 };
 
-export default function quizListener(client) {
-  client.on('messageCreate', async (message) => {
+export default {
+  name: Events.MessageCreate,
+
+  async execute(message) {
     try {
       if (message.channel.id !== TARGET_CHANNEL_ID) return;
       if (message.author.id !== KOTOBA_BOT_ID) return;
@@ -39,71 +43,75 @@ export default function quizListener(client) {
       const data = await res.json();
 
       const results = [];
-      const failures = [];
+
+      const settings = data.settings ?? {};
+      const inlineSettings = settings.inlineSettings ?? {};
+      const scoreLimit = settings.scoreLimit ?? inlineSettings.scoreLimit;
+      const maxMissedQuestions =
+        settings.maxMissedQuestions ?? inlineSettings.maxMissedQuestions;
+      const effect = settings.effect ?? inlineSettings.effect;
+      const aliases = inlineSettings.aliases ?? [];
+      const rawStartCommand = data.rawStartCommand ?? settings.rawStartCommand;
+      const answerTimeLimit = settings.answerTimeLimitInMs != null
+        ? settings.answerTimeLimitInMs / 1000
+        : inlineSettings.answerTimeLimit;
 
       const participant = data.participants?.[0];
       const userId = participant?.discordUser?.id;
       const userName = participant?.discordUser?.username ?? 'Desconocido';
+      const participantId = participant?._id;
+      const score =
+        data.scores?.find((entry) => entry.user === participantId)?.score ??
+        data.scores?.[0]?.score ??
+        0;
 
       if (data.participants?.length === QUIZ_RULES.participants)
         results.push('✅ Participantes OK');
-      else failures.push('❌ Participantes incorrectos');
 
-      if (data.settings?.scoreLimit === QUIZ_RULES.scoreLimit)
+      if (scoreLimit === QUIZ_RULES.scoreLimit)
         results.push('✅ Score limit OK');
-      else failures.push('❌ Score limit incorrecto');
 
       if (data.decks?.[0]?.shortName === QUIZ_RULES.deckShortName)
         results.push('✅ Deck correcto');
-      else failures.push('❌ Deck incorrecto');
 
-      const aliases = data.settings?.inlineSettings?.aliases ?? [];
       if (!QUIZ_RULES.noDelay || aliases.includes('nodelay'))
         results.push('✅ No delay');
-      else failures.push('❌ No delay no activado');
 
-      if (data.settings?.maxMissedQuestions === QUIZ_RULES.maxMissedQuestions)
+      if (maxMissedQuestions === QUIZ_RULES.maxMissedQuestions)
         results.push('✅ Max missed questions OK');
-      else failures.push('❌ Max missed questions incorrecto');
 
-      if (!QUIZ_RULES.hardcore || data.rawStartCommand?.includes('hardcore'))
+      if (!QUIZ_RULES.hardcore || rawStartCommand?.includes('hardcore'))
         results.push('✅ Hardcore');
-      else failures.push('❌ Hardcore no activado');
 
-      const atl =
-        data.settings?.answerTimeLimitInMs
-          ? data.settings.answerTimeLimitInMs / 1000
-          : data.settings?.inlineSettings?.answerTimeLimit;
-
-      if (atl === QUIZ_RULES.answerTimeLimit)
+      if (answerTimeLimit === QUIZ_RULES.answerTimeLimit)
         results.push('✅ Answer time limit OK');
-      else failures.push('❌ Answer time limit incorrecto');
-
-      const effect =
-        data.settings?.effect ?? data.settings?.inlineSettings?.effect;
 
       if (effect === QUIZ_RULES.effect)
         results.push('✅ Effect correcto');
-      else failures.push('❌ Effect incorrecto');
 
       if (QUIZ_RULES.requireWin) {
-        const score = data.scores?.[0]?.score ?? 0;
         if (score >= QUIZ_RULES.scoreLimit)
           results.push('✅ Ganó el quiz');
-        else failures.push('❌ No ganó el quiz');
       }
 
-      const passed = failures.length === 0;
+      const allChecksPassed =
+        data.participants?.length === QUIZ_RULES.participants &&
+        scoreLimit === QUIZ_RULES.scoreLimit &&
+        data.decks?.[0]?.shortName === QUIZ_RULES.deckShortName &&
+        (!QUIZ_RULES.noDelay || aliases.includes('nodelay')) &&
+        maxMissedQuestions === QUIZ_RULES.maxMissedQuestions &&
+        (!QUIZ_RULES.hardcore || rawStartCommand?.includes('hardcore')) &&
+        answerTimeLimit === QUIZ_RULES.answerTimeLimit &&
+        effect === QUIZ_RULES.effect &&
+        (!QUIZ_RULES.requireWin || score >= QUIZ_RULES.scoreLimit);
 
       let msg = `🧠 **Resultado del quiz de ${userName}**\n\n`;
       msg += results.join('\n') + '\n\n';
-      if (failures.length)
-        msg += '⚠️ **Faltó cumplir:**\n' + failures.join('\n') + '\n\n';
-      msg += passed ? '🎉 **QUIZ ACEPTADO**' : '❌ **QUIZ RECHAZADO**';
+      msg += allChecksPassed ? '🎉 **QUIZ ACEPTADO**' : '❌ **QUIZ RECHAZADO**';
 
       await message.channel.send(msg);
 
-      if (passed && userId && message.guild) {
+      if (allChecksPassed && userId && message.guild) {
         const member = await message.guild.members.fetch(userId);
         if (!member.roles.cache.has(PASS_ROLE_ID)) {
           await member.roles.add(PASS_ROLE_ID);
@@ -113,5 +121,5 @@ export default function quizListener(client) {
     } catch (err) {
       console.error('💥 Error quiz:', err);
     }
-  });
-}
+  }
+};
