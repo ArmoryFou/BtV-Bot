@@ -15,7 +15,7 @@ def get_font_path(filename, fallback):
 
 FONT_BOLD = get_font_path('DejaVuSans-Bold.ttf', 'arialbd.ttf')
 FONT_REG  = get_font_path('DejaVuSans.ttf', 'arial.ttf')
-FONT_JP   = get_font_path('NotoSansJP-Black.ttf', 'msgothic.ttc')
+FONT_JP   = get_font_path('NotoSansJP-Medium.ttf', 'msgothic.ttc')
 
 def F(path, size):
     return ImageFont.truetype(path, size)

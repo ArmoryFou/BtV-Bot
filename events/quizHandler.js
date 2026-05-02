@@ -81,12 +81,18 @@ export default {
       // --- Validaciones de Reglas ---
       const settings = data.settings || {};
       const inline = settings.inlineSettings || {};
+      const expectedScoreLimit =
+        config.level === 1 ? 25 : QUIZ_RULES.scoreLimit;
       const expectedMaxMissedQuestions =
-        config.level <= 6 ? 10 : QUIZ_RULES.maxMissedQuestions;
+        config.level === 1
+          ? 5
+          : config.level <= 6
+            ? 10
+            : QUIZ_RULES.maxMissedQuestions;
       const checks = [
         data.participants?.length === QUIZ_RULES.participants,
-        (settings.scoreLimit ?? inline.scoreLimit) === QUIZ_RULES.scoreLimit,
-        score >= QUIZ_RULES.scoreLimit,
+        (settings.scoreLimit ?? inline.scoreLimit) === expectedScoreLimit,
+        score >= expectedScoreLimit,
         (settings.effect ?? inline.effect) === QUIZ_RULES.effect,
         (settings.maxMissedQuestions ?? inline.maxMissedQuestions) ===
           expectedMaxMissedQuestions,
@@ -132,7 +138,7 @@ export default {
         roleName,
         passed: true, // Ya sabemos que pasó por el if(!allPassed) de arriba
         score,
-        maxScore: QUIZ_RULES.scoreLimit,
+        maxScore: expectedScoreLimit,
         username: userName,
       }).catch(() => null);
 
