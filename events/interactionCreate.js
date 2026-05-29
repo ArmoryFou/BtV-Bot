@@ -27,13 +27,33 @@ export default {
       return;
     }
 
-    // En tu evento interactionCreate, después de manejar slash commands:
-if (interaction.isButton() && interaction.customId === "voting_refresh") {
-  const votingCmd = interaction.client.commands.get("voting");
-  if (votingCmd?.handleRefresh) {
-    await votingCmd.handleRefresh(interaction);
-  }
-}
+    if (interaction.isButton()) {
+      if (interaction.customId === "voting_refresh") {
+        const votingCmd = interaction.client.commands.get("voting");
+        if (votingCmd?.handleRefresh) {
+          await votingCmd.handleRefresh(interaction);
+        }
+        return;
+      }
+
+      if (interaction.customId.startsWith("log_delete:")) {
+        const logCmd = interaction.client.commands.get("log");
+        if (logCmd?.handleDelete) {
+          try {
+            await logCmd.handleDelete(interaction);
+          } catch (err) {
+            console.error("Log delete button error:", err);
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.reply({
+                content: "No pude borrar el log.",
+                flags: 64
+              });
+            }
+          }
+        }
+        return;
+      }
+    }
 
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);

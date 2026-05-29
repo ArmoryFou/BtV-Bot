@@ -1,7 +1,14 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require("discord.js");
 const axios = require("axios");
 
 const API_BASE = "https://nihongotracker.app/api";
+const CLUB_ID = "6951b8e3319c4aea0d5d2b2d";
 
 const TYPE_MAP = {
   anime: "anime",
@@ -9,10 +16,10 @@ const TYPE_MAP = {
   reading: "reading",
   visual_novel: "vn",
   vn: "vn",
-  video_game: "video_game",
+  video_game: "game",
   video: "video",
   movie: "movie",
-  tv_show: "tv_show",
+  tv_show: "tv show",
   audio: "audio"
 };
 
@@ -20,10 +27,10 @@ const ENDPOINT_MAP = {
   anime: "media/anime",
   manga: "media/manga",
   reading: "media/reading",
-  video_game: "media/video_game",
+  game: "media/game",
   video: "media/video",
   movie: "media/movie",
-  tv_show: "media/tv_show",
+  "tv show": "media/tv show",
   audio: "media/audio",
   vn: "media/vn"
 };
@@ -33,9 +40,9 @@ const TYPE_COLORS = {
   manga:      0xF59E0B,
   reading:    0x10B981,
   vn:         0x8B5CF6,
-  video_game: 0xEF4444,
+  game:       0xEF4444,
   movie:      0xEC4899,
-  tv_show:    0x06B6D4,
+  "tv show":  0x06B6D4,
   audio:      0x6B7280,
 };
 
@@ -44,9 +51,9 @@ const TYPE_LABELS = {
   manga:      "📚 Manga",
   reading:    "📖 Lectura",
   vn:         "🎮 Novela Visual",
-  video_game: "🕹️ Videojuego",
+  game:       "🕹️ Videojuego",
   movie:      "🎬 Película",
-  tv_show:    "📺 Serie",
+  "tv show":  "📺 Serie",
   audio:      "🎧 Audio",
 };
 
@@ -62,9 +69,9 @@ function mapQuantity(apiType, quantity) {
     case "manga":      return { episodes: 0, pages: quantity, chars: 0, time: 0 };
     case "reading":    return { episodes: 0, pages: 0, chars: quantity, time: 0 };
     case "vn":         return { episodes: 0, pages: 0, chars: quantity, time: 0 };
-    case "video_game": return { episodes: 0, pages: 0, chars: 0, time: quantity };
+    case "game":       return { episodes: 0, pages: 0, chars: 0, time: quantity };
     case "movie":      return { episodes: 0, pages: 0, chars: 0, time: quantity };
-    case "tv_show":    return { episodes: 0, pages: 0, chars: 0, time: quantity };
+    case "tv show":    return { episodes: 0, pages: 0, chars: 0, time: quantity };
     default:           return { episodes: quantity, pages: 0, chars: 0, time: 0 };
   }
 }
@@ -103,6 +110,112 @@ function fuzzyScore(query, m) {
     }
   }
   return best;
+}
+
+function formatChoiceName(name) {
+  const value = String(name || "Desconocido").trim() || "Desconocido";
+  return value.length <= 100 ? value : `${value.slice(0, 97)}...`;
+}
+
+function isObjectId(value) {
+  return /^[a-f0-9]{24}$/i.test(value);
+}
+
+function tagColorFor(name) {
+  const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#ef4444"];
+  let hash = 0;
+
+  for (const char of name) {
+    hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  }
+
+  return colors[Math.abs(hash) % colors.length];
+}
+
+async function resolveTags({ apiKey, username, tagNames }) {
+  const uniqueTags = [...new Set(tagNames.map(t => t.trim()).filter(Boolean))];
+  if (uniqueTags.length === 0) return { ids: [], labels: [] };
+
+  const existingTags = [];
+  if (username) {
+    try {
+      const { data } = await axios.get(`${API_BASE}/tags/user/${encodeURIComponent(username)}`);
+      if (Array.isArray(data)) existingTags.push(...data);
+    } catch (err) {
+      console.error("Tag fetch error:", err.response?.status, err.response?.data || err.message);
+    }
+  }
+
+  const ids = [];
+  const labels = [];
+
+  for (const tagName of uniqueTags) {
+    if (isObjectId(tagName)) {
+      ids.push(tagName);
+      labels.push(tagName);
+      continue;
+    }
+
+    const existing = existingTags.find(tag =>
+      tag.name?.toLowerCase() === tagName.toLowerCase()
+    );
+
+    if (existing?._id) {
+      ids.push(String(existing._id));
+      labels.push(existing.name || tagName);
+      continue;
+    }
+
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/tags`,
+        { name: tagName, color: tagColorFor(tagName) },
+        { headers: getHeaders(apiKey) }
+      );
+
+      ids.push(String(data._id));
+      labels.push(data.name || tagName);
+    } catch (err) {
+      console.error("Tag create error:", err.response?.status, err.response?.data || err.message);
+      throw new Error(`No se pudo crear o resolver la etiqueta "${tagName}".`);
+    }
+  }
+
+  return { ids, labels };
+}
+
+async function fetchRecentClubActivity() {
+  const { data } = await axios.get(`${API_BASE}/clubs/${CLUB_ID}/recent-activity`, {
+    params: { limit: 50 }
+  });
+  return Array.isArray(data?.activities) ? data.activities : [];
+}
+
+async function findUsernameByLogId(logId) {
+  if (!logId) return null;
+
+  const activities = await fetchRecentClubActivity();
+  const activity = activities.find(item => String(item._id) === String(logId));
+  return activity?.user?.username ?? null;
+}
+
+async function getLinkedUsername(db, userDoc, discordId) {
+  if (userDoc.nihongoUsername) return userDoc.nihongoUsername;
+
+  const recentDiscordLog = await db.findOne(
+    { kind: "discordLog", discordId },
+    { sort: { createdAt: -1 } }
+  );
+  const username = await findUsernameByLogId(recentDiscordLog?.logId).catch(() => null);
+
+  if (username) {
+    await db.updateOne(
+      { discordId },
+      { $set: { nihongoUsername: username } }
+    );
+  }
+
+  return username;
 }
 
 function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, user }) {
@@ -144,6 +257,17 @@ function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, 
     .setTimestamp();
 
   return embed;
+}
+
+function buildDeleteButton(logId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`log_delete:${logId}`)
+      .setLabel(disabled ? "Log borrado" : "Borrar log")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled)
+  );
 }
 
 module.exports = {
@@ -233,11 +357,12 @@ module.exports = {
           .sort((a, b) => b.score - a.score)
           .slice(0, 25)
           .map(({ m }) => ({
-            name:
+            name: formatChoiceName(
               m.title?.contentTitleEnglish ||
               m.title?.contentTitleRomaji ||
               m.title?.contentTitleNative ||
-              "Desconocido",
+              "Desconocido"
+            ),
             value: String(m.contentId)
           }))
       );
@@ -253,7 +378,7 @@ module.exports = {
     const typeRaw     = interaction.options.getString("tipo");
     const id          = interaction.options.getString("titulo");
     const quantity    = interaction.options.getInteger("cantidad");
-    const tags        = (interaction.options.getString("etiquetas") || "")
+    const tagNames    = (interaction.options.getString("etiquetas") || "")
       .split(",").map(t => t.trim()).filter(Boolean);
     const description = interaction.options.getString("descripcion") || null;
     const isPrivate   = interaction.options.getBoolean("privado") ?? false;
@@ -278,6 +403,23 @@ module.exports = {
         .setFooter({ text: "nihongotracker.app" });
 
       return interaction.editReply({ embeds: [embedNoLinkeado] });
+    }
+
+    const nihongoUsername = await getLinkedUsername(
+      interaction.client.db,
+      userDoc,
+      interaction.user.id
+    );
+
+    let resolvedTags;
+    try {
+      resolvedTags = await resolveTags({
+        apiKey: userDoc.apiKey,
+        username: nihongoUsername,
+        tagNames
+      });
+    } catch (err) {
+      return interaction.editReply({ content: err.message });
     }
 
     // ================= FETCH MEDIA =================
@@ -311,14 +453,12 @@ module.exports = {
     const body = {
       type: apiType,
       mediaId: id,
-      media: {
+      mediaData: {
         contentId: id,
         contentImage: media?.contentImage || "",
-        title: {
-          contentTitleNative:  media?.title?.contentTitleNative  || "",
-          contentTitleEnglish: media?.title?.contentTitleEnglish || "",
-          contentTitleRomaji:  media?.title?.contentTitleRomaji  || ""
-        },
+        contentTitleNative:  media?.title?.contentTitleNative  || "",
+        contentTitleEnglish: media?.title?.contentTitleEnglish || "",
+        contentTitleRomaji:  media?.title?.contentTitleRomaji  || "",
         type: apiType
       },
       description: resolvedDescription,
@@ -328,7 +468,7 @@ module.exports = {
       time:     mapped.time,
       date:     new Date().toISOString(),
       private:  isPrivate,
-      tags
+      tags:     resolvedTags.ids
     };
 
     console.log("Sending body:", JSON.stringify(body, null, 2));
@@ -346,6 +486,35 @@ module.exports = {
       return interaction.editReply({ content: "No se pudo crear el log. Inténtalo de nuevo." });
     }
 
+    if (logResponse?._id) {
+      try {
+        const inferredUsername = nihongoUsername ?? await findUsernameByLogId(logResponse._id).catch(() => null);
+
+        await interaction.client.db.updateOne(
+          { _id: `discord-log:${logResponse._id}` },
+          {
+            $set: {
+              kind: "discordLog",
+              logId: String(logResponse._id),
+              discordId: interaction.user.id,
+              nihongoUsername: inferredUsername,
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
+
+        if (inferredUsername) {
+          await interaction.client.db.updateOne(
+            { discordId: interaction.user.id },
+            { $set: { nihongoUsername: inferredUsername } }
+          );
+        }
+      } catch (err) {
+        console.error("Failed to mark Discord-created log:", err.message);
+      }
+    }
+
     // ================= EMBED =================
     const xp = logResponse?.xp ?? 0;
 
@@ -354,12 +523,68 @@ module.exports = {
       apiType,
       mapped,
       description: resolvedDescription,
-      tags,
+      tags: resolvedTags.labels,
       xp,
       isPrivate,
       user: interaction.user
     });
 
-    return interaction.editReply({ embeds: [embed] });
+    const components = logResponse?._id ? [buildDeleteButton(logResponse._id)] : [];
+
+    return interaction.editReply({ embeds: [embed], components });
+  },
+
+  async handleDelete(interaction) {
+    const [, logId] = interaction.customId.split(":");
+    if (!logId) {
+      return interaction.reply({ content: "No encontré el ID del log para borrarlo.", flags: 64 });
+    }
+
+    const logDoc = await interaction.client.db.findOne({ _id: `discord-log:${logId}` });
+    if (!logDoc) {
+      return interaction.reply({ content: "No encontré este log en el registro del bot.", flags: 64 });
+    }
+
+    if (logDoc.discordId !== interaction.user.id) {
+      return interaction.reply({ content: "Solo quien creó este log puede borrarlo desde este botón.", flags: 64 });
+    }
+
+    const userDoc = await interaction.client.db.findOne({ discordId: interaction.user.id });
+    if (!userDoc?.apiKey) {
+      return interaction.reply({ content: "Tu cuenta ya no está vinculada, no puedo borrar este log.", flags: 64 });
+    }
+
+    await interaction.deferReply({ flags: 64 });
+
+    try {
+      await axios.delete(`${API_BASE}/logs/${logId}`, {
+        headers: getHeaders(userDoc.apiKey)
+      });
+    } catch (err) {
+      console.error("Log delete error:", err.response?.status, err.response?.data || err.message);
+      return interaction.editReply({ content: "No pude borrar el log en NihongoTracker." });
+    }
+
+    await interaction.client.db.updateOne(
+      { _id: `discord-log:${logId}` },
+      {
+        $set: {
+          deletedAt: new Date(),
+          deletedBy: interaction.user.id
+        }
+      }
+    );
+
+    const embeds = interaction.message.embeds.map(embed => EmbedBuilder.from(embed));
+    if (embeds[0]) {
+      embeds[0].setFooter({ text: "Log borrado desde Discord" });
+    }
+
+    await interaction.message.edit({
+      embeds,
+      components: [buildDeleteButton(logId, true)]
+    });
+
+    return interaction.editReply({ content: "Log borrado." });
   }
 };

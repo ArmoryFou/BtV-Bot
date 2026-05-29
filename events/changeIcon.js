@@ -36,8 +36,14 @@ export default {
   name: "messageCreate",
 
   async execute(message) {
-    // 🔒 solo admins
-    if (!message.member.permissions.has("Administrator")) return;
+    // 🚫 Ignorar DMs (SOLUCIÓN CLAVE)
+    if (!message.guild) return;
+
+    // 🚫 Ignorar bots
+    if (message.author.bot) return;
+
+    // 🔒 solo admins (ahora seguro)
+    if (!message.member?.permissions.has("Administrator")) return;
 
     if (message.content !== "!icon") return;
 
@@ -53,13 +59,9 @@ export default {
     try {
       const buffer = fs.readFileSync(filePath);
 
-      // nombre sin .jpg
       const name = selected.replace(".jpg", "");
 
-      // 🔥 cambiar icono
       await message.guild.setIcon(buffer);
-
-      // 🔥 cambiar nombre del servidor
       await message.guild.setName(name);
 
       await message.reply(`Servidor actualizado a: **${name}**`);
