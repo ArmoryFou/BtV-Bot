@@ -46,6 +46,13 @@ function formatTime(minutes) {
   return `${formatNumber(minutes)} min`;
 }
 
+// Solo tiene sentido cuando hay caracteres Y tiempo registrados.
+function formatSpeed(chars, minutes) {
+  if (!chars || !minutes) return null;
+  const perHour = chars / (minutes / 60);
+  return `${formatNumber(Math.round(perHour))} car/hr`;
+}
+
 function addStat(fields, name, value, formatter = formatNumber) {
   if (!value || value <= 0) return;
   fields.push({ name, value: formatter(value), inline: true });
@@ -65,10 +72,18 @@ function buildLogEmbed(activity) {
   const typeLabel = TYPE_LABELS[apiType] ?? apiType;
   const fields = [];
 
+  const chars = details.chars ?? metadata.chars;
+  const time = details.time ?? metadata.time;
+
   addStat(fields, "📺 Episodios", details.episodes ?? metadata.episodes);
   addStat(fields, "📄 Páginas", details.pages ?? metadata.pages);
-  addStat(fields, "🔤 Caracteres", details.chars ?? metadata.chars);
-  addStat(fields, "⏱️ Tiempo", details.time ?? metadata.time, formatTime);
+  addStat(fields, "📚 Volumen", details.volume ?? metadata.volume);
+  addStat(fields, "🔤 Caracteres", chars);
+  addStat(fields, "⏱️ Tiempo", time, formatTime);
+
+  const speed = formatSpeed(chars, time);
+  if (speed) fields.push({ name: "⚡ Velocidad", value: speed, inline: true });
+
   addStat(fields, "✨ XP", details.xp ?? metadata.xp, value => `+${formatNumber(value)}`);
 
   const tags = Array.isArray(details.tagLabels)

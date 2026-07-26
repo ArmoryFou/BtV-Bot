@@ -90,6 +90,13 @@ function formatTime(minutes) {
   return `${formatNumber(minutes)} min`;
 }
 
+// Solo tiene sentido cuando hay caracteres Y tiempo registrados.
+function formatSpeed(chars, minutes) {
+  if (!chars || !minutes) return null;
+  const perHour = chars / (minutes / 60);
+  return `${formatNumber(Math.round(perHour))} car/hr`;
+}
+
 // Acepta minutos planos ("90"), o formato "2h", "1h30m", "2h1m", "1.5h".
 // Devuelve minutos totales (entero) o null si el formato no es válido.
 function parseDuration(input) {
@@ -247,11 +254,12 @@ async function getLinkedUsername(db, userDoc, discordId) {
   return username;
 }
 
-function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, user }) {
+function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, user, matched, fallbackTitle }) {
   const title =
     media?.title?.contentTitleEnglish ||
     media?.title?.contentTitleRomaji ||
     media?.title?.contentTitleNative ||
+    fallbackTitle ||
     "Desconocido";
 
   const color = TYPE_COLORS[apiType] ?? 0x5865F2;
@@ -269,10 +277,18 @@ function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, 
     statsFields.push({ name: "🔤 Caracteres", value: `${formatNumber(mapped.chars)}`, inline: true });
   if (mapped.time > 0)
     statsFields.push({ name: "⏱️ Tiempo", value: formatTime(mapped.time), inline: true });
+
+  const speed = formatSpeed(mapped.chars, mapped.time);
+  if (speed)
+    statsFields.push({ name: "⚡ Velocidad", value: speed, inline: true });
+
   if (xp > 0)
     statsFields.push({ name: "✨ XP", value: `+${formatNumber(xp)}`, inline: true });
   if (tags.length > 0)
     statsFields.push({ name: "🏷️ Etiquetas", value: tags.map(t => `\`${t}\``).join(" "), inline: false });
+
+  const baseFooter = isPrivate ? "🔒 Log privado" : "nihongotracker.app";
+  const footerText = matched ? baseFooter : `⚠️ Sin match en la base de datos · ${baseFooter}`;
 
   const embed = new EmbedBuilder()
     .setColor(color)
@@ -284,7 +300,7 @@ function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, 
     .setThumbnail(media?.contentImage || null)
     .setDescription(description || null)
     .addFields(statsFields)
-    .setFooter({ text: isPrivate ? "🔒 Log privado" : "nihongotracker.app" })
+    .setFooter({ text: footerText })
     .setTimestamp();
 
   return embed;
@@ -488,7 +504,10 @@ module.exports = {
     }
 
     // ================= FETCH MEDIA =================
-    let media;
+    // Si no matchea contra ningún título conocido, se registra igual como
+    // log libre (nihongotracker lo permite) en vez de bloquear el log.
+    let media = null;
+    let matched = true;
 
     try {
       const url = `${API_BASE}/${endpoint}/${id}`;
@@ -497,8 +516,9 @@ module.exports = {
       const { data } = await axios.get(url, { headers: getHeaders(userDoc.apiKey) });
       media = data;
     } catch (err) {
-      console.error("Media fetch error:", err.response?.status, err.response?.data);
-      return interaction.editReply({ content: "No se encontró el contenido. Comprueba el título y el tipo." });
+      console.error("Media sin match, se registra como log libre:", err.response?.status, err.response?.data);
+      media = null;
+      matched = false;
     }
 
     // ================= MAP QUANTITY =================
@@ -522,21 +542,24 @@ module.exports = {
       mediaData: {
         contentId: id,
         contentImage: media?.contentImage || "",
-        contentTitleNative:  media?.title?.contentTitleNative  || "",
+        contentTitleNative:  media?.title?.contentTitleNative  || (matched ? "" : id),
         contentTitleEnglish: media?.title?.contentTitleEnglish || "",
         contentTitleRomaji:  media?.title?.contentTitleRomaji  || "",
         type: apiType
       },
       description: resolvedDescription,
-      episodes: mapped.episodes,
-      pages:    mapped.pages,
-      chars:    mapped.chars,
-      time:     mapped.time,
-      volume:   mapped.volume,
       date:     new Date().toISOString(),
       private:  isPrivate,
       tags:     resolvedTags.ids
     };
+
+    // nihongotracker valida episodes/pages/chars/time/volume como
+    // "positivo u omitido" — mandar 0 explícito lo rechaza (400).
+    if (mapped.episodes > 0) body.episodes = mapped.episodes;
+    if (mapped.pages    > 0) body.pages    = mapped.pages;
+    if (mapped.chars    > 0) body.chars    = mapped.chars;
+    if (mapped.time     > 0) body.time     = mapped.time;
+    if (mapped.volume   > 0) body.volume   = mapped.volume;
 
     console.log("Sending body:", JSON.stringify(body, null, 2));
 
@@ -593,7 +616,9 @@ module.exports = {
       tags: resolvedTags.labels,
       xp,
       isPrivate,
-      user: interaction.user
+      user: interaction.user,
+      matched,
+      fallbackTitle: id
     });
 
     const components = logResponse?._id ? [buildDeleteButton(logResponse._id)] : [];
