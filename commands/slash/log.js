@@ -57,6 +57,9 @@ const TYPE_LABELS = {
   audio:      "🎧 Audio",
 };
 
+// Tipos cuya "cantidad" principal representa tiempo, no un conteo entero.
+const TIME_TYPES = new Set(["game", "movie", "tv show"]);
+
 const getHeaders = (apiKey) => ({
   "X-API-Key": apiKey,
   "Content-Type": "application/json",
@@ -65,14 +68,14 @@ const getHeaders = (apiKey) => ({
 
 function mapQuantity(apiType, quantity) {
   switch (apiType) {
-    case "anime":      return { episodes: quantity, pages: 0, chars: 0, time: 0 };
-    case "manga":      return { episodes: 0, pages: quantity, chars: 0, time: 0 };
-    case "reading":    return { episodes: 0, pages: 0, chars: quantity, time: 0 };
-    case "vn":         return { episodes: 0, pages: 0, chars: quantity, time: 0 };
-    case "game":       return { episodes: 0, pages: 0, chars: 0, time: quantity };
-    case "movie":      return { episodes: 0, pages: 0, chars: 0, time: quantity };
-    case "tv show":    return { episodes: 0, pages: 0, chars: 0, time: quantity };
-    default:           return { episodes: quantity, pages: 0, chars: 0, time: 0 };
+    case "anime":      return { episodes: quantity, pages: 0, chars: 0, time: 0, volume: 0 };
+    case "manga":      return { episodes: 0, pages: quantity, chars: 0, time: 0, volume: 0 };
+    case "reading":    return { episodes: 0, pages: 0, chars: quantity, time: 0, volume: 0 };
+    case "vn":         return { episodes: 0, pages: 0, chars: quantity, time: 0, volume: 0 };
+    case "game":       return { episodes: 0, pages: 0, chars: 0, time: quantity, volume: 0 };
+    case "movie":      return { episodes: 0, pages: 0, chars: 0, time: quantity, volume: 0 };
+    case "tv show":    return { episodes: 0, pages: 0, chars: 0, time: quantity, volume: 0 };
+    default:           return { episodes: quantity, pages: 0, chars: 0, time: 0, volume: 0 };
   }
 }
 
@@ -85,6 +88,32 @@ function formatTime(minutes) {
     return `${formatNumber(minutes)} min (${(minutes / 60).toFixed(1)}h)`;
   }
   return `${formatNumber(minutes)} min`;
+}
+
+// Acepta minutos planos ("90"), o formato "2h", "1h30m", "2h1m", "1.5h".
+// Devuelve minutos totales (entero) o null si el formato no es válido.
+function parseDuration(input) {
+  if (input === null || input === undefined) return null;
+
+  const str = String(input).trim().toLowerCase().replace(/\s+/g, "");
+  if (str === "") return null;
+
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+
+  const match = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+)m)?$/.exec(str);
+  if (!match || (!match[1] && !match[2])) return null;
+
+  const hours = match[1] ? parseFloat(match[1]) : 0;
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+
+  return Math.round(hours * 60) + minutes;
+}
+
+// Para "cantidad" cuando el tipo NO es de tiempo: debe ser un entero simple.
+function parseCount(input) {
+  const str = String(input ?? "").trim();
+  if (!/^\d+$/.test(str)) return null;
+  return parseInt(str, 10);
 }
 
 function fuzzyScore(query, m) {
@@ -234,6 +263,8 @@ function buildEmbed({ media, apiType, mapped, description, tags, xp, isPrivate, 
     statsFields.push({ name: "📺 Episodios", value: `${formatNumber(mapped.episodes)}`, inline: true });
   if (mapped.pages > 0)
     statsFields.push({ name: "📄 Páginas", value: `${formatNumber(mapped.pages)}`, inline: true });
+  if (mapped.volume > 0)
+    statsFields.push({ name: "📚 Volumen", value: `${formatNumber(mapped.volume)}`, inline: true });
   if (mapped.chars > 0)
     statsFields.push({ name: "🔤 Caracteres", value: `${formatNumber(mapped.chars)}`, inline: true });
   if (mapped.time > 0)
@@ -297,9 +328,9 @@ module.exports = {
         .setAutocomplete(true)
     )
 
-    .addIntegerOption(o =>
+    .addStringOption(o =>
       o.setName("cantidad")
-        .setDescription("Episodios / Páginas / Caracteres / Minutos según el tipo (0 si no aplica)")
+        .setDescription("Episodios/Páginas/Caracteres, o Tiempo (90, 2h, 1h30m) según el tipo")
         .setRequired(true)
     )
 
@@ -314,8 +345,13 @@ module.exports = {
     )
 
     .addIntegerOption(o =>
+      o.setName("volumen")
+        .setDescription("Volúmenes extra (opcional)")
+    )
+
+    .addStringOption(o =>
       o.setName("tiempo")
-        .setDescription("Tiempo extra en minutos (opcional)")
+        .setDescription("Tiempo extra (opcional). Minutos o formato como 2h, 1h30m, 2h1m")
     )
 
     .addStringOption(o =>
@@ -375,19 +411,48 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
 
-    const typeRaw     = interaction.options.getString("tipo");
-    const id          = interaction.options.getString("titulo");
-    const quantity    = interaction.options.getInteger("cantidad");
-    const tagNames    = (interaction.options.getString("etiquetas") || "")
+    const typeRaw      = interaction.options.getString("tipo");
+    const id            = interaction.options.getString("titulo");
+    const cantidadRaw   = interaction.options.getString("cantidad");
+    const tiempoRaw     = interaction.options.getString("tiempo");
+    const volumenExtra  = interaction.options.getInteger("volumen") || 0;
+    const tagNames      = (interaction.options.getString("etiquetas") || "")
       .split(",").map(t => t.trim()).filter(Boolean);
-    const description = interaction.options.getString("descripcion") || null;
-    const isPrivate   = interaction.options.getBoolean("privado") ?? false;
+    const description   = interaction.options.getString("descripcion") || null;
+    const isPrivate      = interaction.options.getBoolean("privado") ?? false;
 
     const apiType  = TYPE_MAP[typeRaw];
     const endpoint = ENDPOINT_MAP[apiType];
 
     if (!endpoint)
       return interaction.editReply({ content: "Tipo de contenido no válido." });
+
+    // ================= PARSE CANTIDAD / TIEMPO =================
+    let quantity;
+
+    if (TIME_TYPES.has(apiType)) {
+      quantity = parseDuration(cantidadRaw);
+      if (quantity === null) {
+        return interaction.editReply({
+          content: "Formato de tiempo inválido en \"cantidad\". Usa minutos (ej. 90) o un formato como 2h, 1h30m, 2h1m."
+        });
+      }
+    } else {
+      quantity = parseCount(cantidadRaw);
+      if (quantity === null) {
+        return interaction.editReply({ content: "\"cantidad\" debe ser un número entero." });
+      }
+    }
+
+    let extraTime = 0;
+    if (tiempoRaw) {
+      extraTime = parseDuration(tiempoRaw);
+      if (extraTime === null) {
+        return interaction.editReply({
+          content: "Formato de tiempo inválido en \"tiempo\". Usa minutos (ej. 90) o un formato como 2h, 1h30m, 2h1m."
+        });
+      }
+    }
 
     // ================= CHECK CUENTA VINCULADA =================
     const userDoc = await interaction.client.db.findOne({ discordId: interaction.user.id });
@@ -438,9 +503,10 @@ module.exports = {
 
     // ================= MAP QUANTITY =================
     const mapped = mapQuantity(apiType, quantity);
-    mapped.pages += interaction.options.getInteger("paginas")    || 0;
-    mapped.chars += interaction.options.getInteger("caracteres") || 0;
-    mapped.time  += interaction.options.getInteger("tiempo")     || 0;
+    mapped.pages  += interaction.options.getInteger("paginas")    || 0;
+    mapped.chars  += interaction.options.getInteger("caracteres") || 0;
+    mapped.time   += extraTime;
+    mapped.volume += volumenExtra;
 
     // ================= BODY =================
     const resolvedDescription = description ?? (
@@ -466,6 +532,7 @@ module.exports = {
       pages:    mapped.pages,
       chars:    mapped.chars,
       time:     mapped.time,
+      volume:   mapped.volume,
       date:     new Date().toISOString(),
       private:  isPrivate,
       tags:     resolvedTags.ids

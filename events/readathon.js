@@ -38,6 +38,40 @@ async function getAvatarUrl(client, contributor) {
   return user?.displayAvatarURL({ size: 512 }) || contributor.avatar || null;
 }
 
+function buildStatsEmbed(event) {
+  const data = readathon.buildStatsEmbedData(event);
+  return new EmbedBuilder()
+    .setColor(data.color)
+    .setTitle(data.title)
+    .addFields(data.fields)
+    .setFooter({ text: data.footer });
+}
+
+function buildTopTypeEmbed(event) {
+  const data = readathon.buildTopTypeEmbedData(event);
+  if (!data) return null;
+
+  return new EmbedBuilder()
+    .setColor(data.color)
+    .setTitle(data.title)
+    .setDescription(data.description)
+    .setFooter({ text: data.footer });
+}
+
+function buildTopMediaEmbed(event) {
+  const data = readathon.buildTopMediaEmbedData(event);
+  if (!data) return null;
+
+  const embed = new EmbedBuilder()
+    .setColor(data.color)
+    .setTitle(data.title)
+    .setDescription(data.description)
+    .setFooter({ text: data.footer });
+
+  if (data.image) embed.setImage(data.image);
+  return embed;
+}
+
 async function sendFinalResults(client, event) {
   if (!event.channelId || event.completionAnnounced) return;
 
@@ -66,8 +100,10 @@ async function sendFinalResults(client, event) {
     .setFooter({ text: `Readathon ${event.date}` })
     .setTimestamp(new Date(event.updatedAt));
 
-  await channel.send({ embeds: [summary] });
+  // Resumen + estadísticas generales en un mismo mensaje.
+  await channel.send({ embeds: [summary, buildStatsEmbed(event)] });
 
+  // Un embed individual por cada podio, con avatar.
   for (const [index, winner] of winners.entries()) {
     const avatarUrl = await getAvatarUrl(client, winner);
     const name = winner.discordId ? `<@${winner.discordId}>` : winner.username;
@@ -79,6 +115,12 @@ async function sendFinalResults(client, event) {
 
     if (avatarUrl) winnerEmbed.setThumbnail(avatarUrl);
     await channel.send({ embeds: [winnerEmbed] });
+  }
+
+  // Medio más logueado + obra más logueada (con imagen), en un mismo mensaje.
+  const extraEmbeds = [buildTopTypeEmbed(event), buildTopMediaEmbed(event)].filter(Boolean);
+  if (extraEmbeds.length > 0) {
+    await channel.send({ embeds: extraEmbeds });
   }
 
   await client.db.updateOne(
