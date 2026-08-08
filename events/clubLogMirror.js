@@ -86,9 +86,12 @@ function buildLogEmbed(activity) {
 
   addStat(fields, "✨ XP", details.xp ?? metadata.xp, value => `+${formatNumber(value)}`);
 
-  const tags = Array.isArray(details.tagLabels)
-    ? details.tagLabels.filter(Boolean)
-    : (Array.isArray(details.tags) ? details.tags.filter(Boolean) : []);
+  const rawTagSource = Array.isArray(details.tagLabels) ? details.tagLabels : details.tags;
+  const tags = Array.isArray(rawTagSource)
+    ? rawTagSource
+        .map(tag => (tag && typeof tag === "object" ? tag.name : tag))
+        .filter(tag => typeof tag === "string" && tag.length > 0)
+    : [];
   if (tags.length > 0) {
     fields.push({ name: "🏷️ Etiquetas", value: tags.map(tag => `\`${tag}\``).join(" "), inline: false });
   }
@@ -140,15 +143,29 @@ async function fetchUserLogDetails(activity) {
   const log = data.find(item => String(item._id) === String(logId)) ?? null;
   if (!log) return null;
 
-  const tagIds = Array.isArray(log.tags) ? log.tags.map(tag => String(tag)) : [];
-  if (tagIds.length === 0) return log;
+  if (!Array.isArray(log.tags) || log.tags.length === 0) return log;
 
-  const tags = await fetchUserTags(username).catch(() => []);
-  const tagMap = new Map(tags.map(tag => [String(tag._id), tag.name]));
+  // log.tags puede venir como IDs planos ("507f...") o ya poblado
+  // ({ _id, name, ... }). Si viene poblado, usamos el name directo
+  // y evitamos el fetch/lookup extra.
+  const rawTags = log.tags.map(tag =>
+    tag && typeof tag === "object" ? { id: String(tag._id ?? ""), name: tag.name } : { id: String(tag), name: null }
+  );
+
+  const missingIds = rawTags.filter(t => !t.name).map(t => t.id).filter(Boolean);
+  let tagMap = new Map();
+  if (missingIds.length > 0) {
+    const tags = await fetchUserTags(username).catch(() => []);
+    tagMap = new Map(tags.map(tag => [String(tag._id), tag.name]));
+  }
+
+  const tagLabels = rawTags
+    .map(t => t.name || tagMap.get(t.id) || t.id)
+    .filter(label => typeof label === "string" && label.length > 0);
 
   return {
     ...log,
-    tagLabels: tagIds.map(tagId => tagMap.get(tagId) || tagId)
+    tagLabels
   };
 }
 
